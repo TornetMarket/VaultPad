@@ -1,10 +1,7 @@
 /* =========================================================
-   VaultPad — script.js (Locked Login, Clean UI, Mobile-First)
-   - App is fully inert until correct PIN is entered
-   - Strong modal handling (no ESC/backdrop bypass)
-   - Local-only storage for Media (images) + Text notes
-   - Default password: "Venus!420"
-   - Also accept numeric master PIN "2338346420" for mobile keypad flows
+   VaultPad — script.js (Unlock fix for 2338346420 + hard close)
+   - Accepts normal password (Store.pass) OR numeric PIN "2338346420"
+   - On success: force-closes login modal (no lingering overlay)
    ========================================================= */
 
 (() => {
@@ -70,7 +67,7 @@
   // Start fully locked (CSS disables pointer events + blurs app)
   document.body.classList.add("locked");
 
-  // Numeric master PIN to allow entry from numeric-only keypad:
+  // Numeric master PIN for keypad-only users
   const MASTER_NUMERIC_PIN = "2338346420";
 
   /* --------------------------
@@ -90,6 +87,16 @@
       const anyOpen = $$("dialog").some(el => el.open);
       if (!anyOpen) document.body.classList.remove("modal-open");
     });
+  }
+  // Extra defensive close used after successful unlock
+  function hardCloseLogin(){
+    const d = byId("login-modal");
+    try { d.close(); } catch {}
+    d.open = false;
+    d.removeAttribute("open");
+    document.body.classList.remove("modal-open");
+    // double-pass to beat any async repaint weirdness on iOS
+    setTimeout(()=> document.body.classList.remove("modal-open"), 0);
   }
 
   /* --------------------------
@@ -151,14 +158,9 @@
     loginDlg.addEventListener("cancel", (e)=> e.preventDefault());
 
     openDialog("login-modal");
-    // Delay focus to ensure dialog paints first (iOS Safari quirk)
     setTimeout(()=> loginInput.focus(), 30);
 
-    function isValidUnlock(val){
-      const v = (val || "").trim();
-      // Accept either the stored password OR the numeric master PIN for keypad-only users
-      return v === Store.pass || v === MASTER_NUMERIC_PIN;
-    }
+    const isValidUnlock = v => (v === Store.pass || v === MASTER_NUMERIC_PIN);
 
     function tryUnlock(){
       const raw = loginInput.value;
@@ -170,7 +172,7 @@
       if (isValidUnlock(val)){
         App.unlocked = true;
         document.body.classList.remove("locked");
-        closeDialog("login-modal");
+        hardCloseLogin();                 // << force close (fix for lingering modal)
         loginInput.value = "";
         Toaster.toast("Vault unlocked","success");
         refreshCounts();
@@ -180,15 +182,13 @@
       }
     }
 
-    loginGo.addEventListener("click", tryUnlock);
+    // Ensure button doesn't submit any form / cause reloads
+    loginGo.addEventListener("click", (e)=>{ e.preventDefault(); tryUnlock(); });
     loginInput.addEventListener("keydown", (e)=>{ if (e.key === "Enter") tryUnlock(); });
 
     // Reauth (used for opening Hidden Media/Text)
     const reInput = byId("reauth-pass");
     const reGo = byId("btn-reauth-go");
-
-    reGo.addEventListener("click", doReauth);
-    reInput.addEventListener("keydown", (e)=>{ if (e.key === "Enter") doReauth(); });
 
     function doReauth(){
       const v = (reInput.value || "").trim();
@@ -204,6 +204,9 @@
         reInput.select();
       }
     }
+
+    reGo.addEventListener("click", (e)=>{ e.preventDefault(); doReauth(); });
+    reInput.addEventListener("keydown", (e)=>{ if (e.key === "Enter") doReauth(); });
 
     // Defensive: any stray [data-close="login-modal"] becomes no-op
     $$('[data-close="login-modal"]').forEach(b=>{
@@ -436,7 +439,6 @@
     document.body.classList.add("modal-open");
     dlg.querySelectorAll(".icon-btn,.btn.ghost").forEach(x=> x.addEventListener("click", ()=>{
       dlg.close(); dlg.remove();
-      // Remove modal-open if no other dialogs remain
       requestAnimationFrame(()=>{
         const anyOpen = $$("dialog").some(el => el.open);
         if (!anyOpen) document.body.classList.remove("modal-open");
